@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS Cost Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 600; }
+    header span { font-size: 0.85rem; opacity: 0.6; margin-left: auto; }
+
+    main { max-width: 960px; margin: 32px auto; padding: 0 16px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .card .label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #888;
+      margin-bottom: 10px;
+    }
+
+    .card .value {
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .card.alert .value { color: #e53e3e; }
+    .card.ok .value    { color: #2f855a; }
+
+    .card .sub {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 6px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      margin-top: 10px;
+    }
+
+    .badge.red   { background: #fff5f5; color: #e53e3e; }
+    .badge.green { background: #f0fff4; color: #2f855a; }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+      color: #333;
+    }
+
+    table {
+      width: 100%;
+      background: #fff;
+      border-radius: 12px;
+      border-collapse: collapse;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+
+    th {
+      background: #f7f8fa;
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      border-bottom: 1px solid #eee;
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 0.88rem;
+      border-bottom: 1px solid #f3f3f3;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .dot-red   { background: #e53e3e; }
+    .dot-green { background: #38a169; }
+
+    footer {
+      text-align: center;
+      padding: 32px;
+      font-size: 0.78rem;
+      color: #bbb;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#FF9900" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round"
+      d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+  </svg>
+  <h1>AWS Cost Dashboard</h1>
+  <span id="last-updated">Loading…</span>
+</header>
+
+<main>
+  <div class="cards">
+    <div class="card" id="card-cost">
+      <div class="label">Estimated Cost (MTD)</div>
+      <div class="value" id="cost-value">—</div>
+      <div class="sub">Month-to-date charges</div>
+      <span class="badge" id="cost-badge"></span>
+    </div>
+
+    <div class="card">
+      <div class="label">Alert Threshold</div>
+      <div class="value" id="threshold-value">—</div>
+      <div class="sub">Configured limit</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Alert Status</div>
+      <div class="value" style="font-size:1.1rem;padding-top:6px;" id="alert-status">—</div>
+      <div class="sub" id="alert-sub"></div>
+    </div>
+  </div>
+
+  <div class="section-title">Recent Cost Records</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Cost (USD)</th>
+        <th>Threshold (USD)</th>
+        <th>Alert</th>
+      </tr>
+    </thead>
+    <tbody id="records-body">
+      <tr><td colspan="4" style="text-align:center;color:#aaa;padding:24px;">Loading data…</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<footer>Data fetched from S3 cost records &mdash; refreshes on page load</footer>
+
+<script>
+  // Replace this URL with your actual S3 object URL after uploading cost.json
+  const COST_DATA_URL = "cost-data/latest.json";
+
+  async function loadData() {
+    try {
+      const res = await fetch(COST_DATA_URL);
+      if (!res.ok) throw new Error("not found");
+      const data = await res.json();
+      render(data);
+    } catch {
+      useSampleData();
+    }
+  }
+
+  function render(data) {
+    const cost      = data.estimated_cost_usd ?? 0;
+    const threshold = data.threshold_usd ?? 50;
+    const triggered = data.alert_triggered ?? false;
+    const ts        = data.timestamp ? new Date(data.timestamp).toLocaleString() : "—";
+
+    document.getElementById("last-updated").textContent = "Last updated: " + ts;
+    document.getElementById("cost-value").textContent = "$" + cost.toFixed(2);
+    document.getElementById("threshold-value").textContent = "$" + threshold.toFixed(2);
+
+    const cardCost = document.getElementById("card-cost");
+    const badge    = document.getElementById("cost-badge");
+    const alertEl  = document.getElementById("alert-status");
+    const alertSub = document.getElementById("alert-sub");
+
+    if (triggered) {
+      cardCost.classList.add("alert");
+      badge.textContent = "Over threshold";
+      badge.className = "badge red";
+      alertEl.innerHTML = '<span class="status-dot dot-red"></span>Alert triggered';
+      alertSub.textContent = "SNS notification sent";
+    } else {
+      cardCost.classList.add("ok");
+      badge.textContent = "Within budget";
+      badge.className = "badge green";
+      alertEl.innerHTML = '<span class="status-dot dot-green"></span>No alert';
+      alertSub.textContent = "Spending is within threshold";
+    }
+
+    const tbody = document.getElementById("records-body");
+    tbody.innerHTML = `
+      <tr>
+        <td>${ts}</td>
+        <td>$${cost.toFixed(2)}</td>
+        <td>$${threshold.toFixed(2)}</td>
+        <td>
+          <span class="badge ${triggered ? "red" : "green"}">
+            ${triggered ? "Yes" : "No"}
+          </span>
+        </td>
+      </tr>`;
+  }
+
+  function useSampleData() {
+    render({
+      timestamp: new Date().toISOString(),
+      estimated_cost_usd: 23.45,
+      threshold_usd: 50.0,
+      alert_triggered: false,
+    });
+    document.getElementById("last-updated").textContent = "Sample data (no S3 source found)";
+  }
+
+  loadData();
+</script>
+</body>
+</html>
